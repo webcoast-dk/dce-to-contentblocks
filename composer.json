@@ -13,6 +13,9 @@
     "extra": {
         "typo3/cms": {
             "extension-key": "dce_to_contentblocks"
+        },
+        "branch-alias": {
+            "dev-main": "1.0.x-dev"
         }
     },
     "require": {
