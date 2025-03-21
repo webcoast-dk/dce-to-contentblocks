@@ -189,7 +189,7 @@ class UpgradeUtility
             if ($migrationInstruction['mergeWith'] ?? null) {
                 $newFieldName = $migrationInstruction['mergeWith'];
             }
-            $fileIds = GeneralUtility::intExplode(',', $flexFormData[$oldFieldName]);
+            $fileIds = GeneralUtility::intExplode(',', $flexFormData[$oldFieldName], true);
             $fileReferencesToInsert = [];
             $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record, $migrationInstruction);
             foreach ($fileIds as $fileId) {
