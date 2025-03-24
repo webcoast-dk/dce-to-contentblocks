@@ -204,11 +204,11 @@ readonly class MigrationUtility
                         unset($config['foreign_selector_fieldTcaOverride']);
                     }
                 }
-                if ($config['foreign_types']) {
+                if ($config['foreign_types'] ?? null) {
                     $fieldConfiguration['overrideChildTca']['types'] = $config['foreign_types'];
                     unset($config['foreign_types']);
                 }
-                if ((string) $config['appearance']['useSortable'] === '1') {
+                if ((string) ($config['appearance']['useSortable'] ?? 0) === '1') {
                     unset($config['appearance']['useSortable']);
                 }
                 unset($config['foreign_table'], $config['foreign_field'], $config['foreign_sortby'], $config['foreign_table_field'], $config['foreign_match_fields'], $config['foreign_label'], $config['foreign_selector']);
