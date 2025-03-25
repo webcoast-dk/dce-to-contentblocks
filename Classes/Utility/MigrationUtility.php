@@ -300,7 +300,7 @@ readonly class MigrationUtility
         $templateContent = '';
         if ($dceConfiguration['template_type'] === 'inline') {
             $templateContent = $dceConfiguration['template_content'] ?? '';
-        } elseif ($dceConfiguration['template_Type'] === 'file') {
+        } elseif ($dceConfiguration['template_type'] === 'file') {
             $templatePath = $dceConfiguration['template_file'] ?? '';
             if (str_starts_with($templatePath, 'EXT:')) {
                 $templateContent = file_get_contents(GeneralUtility::getFileAbsFileName($templatePath));
