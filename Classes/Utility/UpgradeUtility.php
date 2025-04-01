@@ -247,8 +247,13 @@ class UpgradeUtility
             } elseif ($migrationInstruction['value'] ?? null) {
                 $data[$newFieldName] = $migrationInstruction['value'];
             } else {
-                $data[$newFieldName] = $flexFormData[$oldFieldName] ?? '';
+                if ($migrationInstruction['trim'] ?? false) {
+                    $data[$newFieldName] = trim($flexFormData[$oldFieldName] ?? '');
+                } else {
+                    $data[$newFieldName] = $flexFormData[$oldFieldName] ?? '';
+                }
             }
+
         }
     }
 
