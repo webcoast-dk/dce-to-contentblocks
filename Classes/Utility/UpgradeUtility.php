@@ -266,7 +266,7 @@ class UpgradeUtility
         }
 
         $flexFormData = $this->flexFormService->convertFlexFormContentToArray($record['pi_flexform']);
-        $sections = $flexFormData['settings'][$oldFieldName] ?? [];
+        $sections = $flexFormData['settings'][$oldFieldName] ?: [];
         $count = 0;
 
         foreach ($sections as $section) {
