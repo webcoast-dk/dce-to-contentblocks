@@ -266,7 +266,7 @@ class UpgradeUtility
         }
 
         $flexFormData = $this->flexFormService->convertFlexFormContentToArray($record['pi_flexform']);
-        $sections = $flexFormData['settings'][$oldFieldName] ?: [];
+        $sections = ($flexFormData['settings'][$oldFieldName] ?? null) ?: [];
         $count = 0;
 
         foreach ($sections as $section) {
@@ -352,7 +352,7 @@ class UpgradeUtility
                 continue;
             }
 
-            if ($fieldConfiguration['dataFrom'] && ($flexFormData[$fieldConfiguration['dataFrom']] ?? null)) {
+            if ($fieldConfiguration['dataFrom'] ?? null && ($flexFormData[$fieldConfiguration['dataFrom']] ?? null)) {
                 if ($fieldConfiguration['trim'] ?? false) {
                     $fileReferenceData[$fieldName] = trim($flexFormData[$fieldConfiguration['dataFrom']]);
                 } else {
