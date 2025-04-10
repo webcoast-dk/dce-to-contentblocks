@@ -7,14 +7,17 @@ namespace WEBcoast\DceToContentblocks\Utility;
 
 
 use Doctrine\DBAL\Result;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use TYPO3\CMS\ContentBlocks\Definition\Factory\UniqueIdentifierCreator;
 use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Package\Package;
+use TYPO3\CMS\Core\Resource\FileInterface;
 use TYPO3\CMS\Core\Resource\StorageRepository;
 use TYPO3\CMS\Core\Service\FlexFormService;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\StringUtility;
+use WEBcoast\DceToContentblocks\Event\AfterDataMigratedEvent;
 use WEBcoast\DceToContentblocks\Repository\DceRepository;
 use WEBcoast\DceToContentblocks\Update\MigrationHelperInterface;
 
@@ -28,7 +31,7 @@ class UpgradeUtility
 
     public array $updateStack = [];
 
-    public function __construct(ConnectionPool $connectionPool, protected DceRepository $dceRepository, protected FlexFormService $flexFormService)
+    public function __construct(ConnectionPool $connectionPool, protected DceRepository $dceRepository, protected FlexFormService $flexFormService, protected EventDispatcherInterface $eventDispatcher)
     {
         $this->connection = $connectionPool->getConnectionForTable('tt_content');
     }
@@ -60,9 +63,9 @@ class UpgradeUtility
                 $this->addData($data, $record, $oldField, $newFieldName, $migrationInstruction, $dceConfiguration, $migrationInstructions['package']);
             }
 
-            if (($migrationInstructions['afterDataProcessed'] ?? false) && is_callable($migrationInstructions['afterDataProcessed'])) {
-                $data = $migrationInstructions['afterDataProcessed']($data, $record, $migrationInstructions);
-            }
+            $afterDataMigratedEvent = new AfterDataMigratedEvent($data, $record, $migrationInstructions, $this);
+            $this->eventDispatcher->dispatch($afterDataMigratedEvent);
+            $data = $afterDataMigratedEvent->getData();
 
             $data['CType'] = UniqueIdentifierCreator::createContentTypeIdentifier($migrationInstructions['vendor'] . '/' . $migrationInstructions['identifier']);
 
@@ -156,7 +159,7 @@ class UpgradeUtility
             /** @var StorageRepository $storageRepository */
             $storageRepository = GeneralUtility::makeInstance(StorageRepository::class);
             $fileReferencesToInsert = [];
-            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record, $migrationInstruction);
+            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record);
             foreach ($filesNames as $fileName) {
                 $fileIdentifier = ltrim(($dceFieldConfiguration['uploadfolder'] ?? '') . '/' . $fileName, '/');
                 $folderName = dirname($fileIdentifier);
@@ -191,7 +194,7 @@ class UpgradeUtility
             }
             $fileIds = GeneralUtility::intExplode(',', $flexFormData[$oldFieldName], true);
             $fileReferencesToInsert = [];
-            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record, $migrationInstruction);
+            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record);
             foreach ($fileIds as $fileId) {
                 $fileReferenceData = [
                     'uid_local' => $fileId,
@@ -220,7 +223,7 @@ class UpgradeUtility
             if ($migrationInstruction['mergeWith'] ?? null) {
                 $newFieldName = $migrationInstruction['mergeWith'];
             }
-            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record, $migrationInstruction);
+            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record);
             $fileReferenceData = [
                 'fieldname' => $newFieldName,
                 'sorting_foreign' => ($otherFileReferencesCount + 1) * 256,
@@ -314,7 +317,7 @@ class UpgradeUtility
         $data[$newFieldName] = $count;
     }
 
-    protected function countFileReferenceForField(string $fieldName, array $record, array $migrationInstruction): int
+    protected function countFileReferenceForField(string $fieldName, array $record): int
     {
         $insertStacks = array_filter($this->insertStack, function ($item) {
             return array_key_exists('sys_file_reference', $item);
@@ -362,5 +365,54 @@ class UpgradeUtility
         }
 
         return $fileReferenceData;
+    }
+
+    public function addFileReference(FileInterface $file, int $recordUid, int $pid, string $table, string $fieldName, array $metaData = [])
+    {
+        $countFileReferences = $this->countFileReferenceForField($fieldName, ['uid' => $recordUid]);
+        $this->insertStack[] = [
+            'sys_file_reference' => [
+                array_merge(
+                    [
+                        'pid' => $pid,
+                        'uid_local' => $file->getUid(),
+                        'uid_foreign' => $recordUid,
+                        'tablenames' => $table,
+                        'fieldname' => $fieldName,
+                        'table_local' => 'sys_file',
+                        'sorting_foreign' => ($countFileReferences + 1) * 256,
+                    ],
+                    array_filter($metaData, function ($key) {
+                        return !in_array($key, [
+                            'uid',
+                            'pid',
+                            'tstamp',
+                            'crdate',
+                            'deleted',
+                            'hidden',
+                            'sys_language_uid',
+                            'l10n_parent',
+                            'l10n_state',
+                            'l10n_diffsource',
+                            't3ver_oid',
+                            't3ver_id',
+                            't3ver_label',
+                            't3ver_wsid',
+                            't3ver_state',
+                            't3ver_stage',
+                            't3ver_count',
+                            't3ver_tstamp',
+                            't3ver_move_id',
+                            'uid_local',
+                            'uid_foreign',
+                            'tablenames',
+                            'fieldname',
+                            'sorting_foreign',
+                            'table_local',
+                        ]);
+                    }, ARRAY_FILTER_USE_KEY)
+                )
+            ]
+        ];
     }
 }
