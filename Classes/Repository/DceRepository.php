@@ -80,36 +80,4 @@ class DceRepository
 
         return $queryBuilder->executeQuery()->fetchAllAssociative();
     }
-
-    public function fetchFieldByParentDce(int $uid, string $identifier): array|false
-    {
-        $queryBuilder = $this->createQueryBuilder('tx_dce_domain_model_dcefield');
-        $queryBuilder
-            ->select('*')
-            ->from('tx_dce_domain_model_dcefield')
-            ->where(
-                $queryBuilder->expr()->eq('parent_dce', $queryBuilder->createNamedParameter($uid, ParameterType::INTEGER))
-            )
-            ->andWhere(
-                $queryBuilder->expr()->eq('variable', $queryBuilder->createNamedParameter($identifier))
-            );
-
-        return $queryBuilder->executeQuery()->fetchAssociative();
-    }
-
-    public function fetchFieldByParentField(mixed $uid, string $identifier)
-    {
-        $queryBuilder = $this->createQueryBuilder('tx_dce_domain_model_dcefield');
-        $queryBuilder
-            ->select('*')
-            ->from('tx_dce_domain_model_dcefield')
-            ->where(
-                $queryBuilder->expr()->eq('parent_field', $queryBuilder->createNamedParameter($uid, ParameterType::INTEGER))
-            )
-            ->andWhere(
-                $queryBuilder->expr()->eq('variable', $queryBuilder->createNamedParameter($identifier))
-            );
-
-        return $queryBuilder->executeQuery()->fetchAssociative();
-    }
 }

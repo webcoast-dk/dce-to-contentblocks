@@ -56,11 +56,11 @@ class UpgradeUtility
                 $migrationInstruction = $migrationInstructions['fields'][$oldField] ?? [];
                 $newFieldName = $migrationInstruction['fieldName'] ?? $oldField;
 
-                if ($migrationInstruction['skip'] ?? false) {
+                if (($migrationInstruction['skip'] ?? false) || (int) $dceField['type'] === 1) {
                     continue;
                 }
 
-                $this->addData($data, $record, $oldField, $newFieldName, $migrationInstruction, $dceConfiguration, $migrationInstructions['package']);
+                $this->addData($data, $record, $oldField, $newFieldName, $migrationInstruction, $dceField, $migrationInstructions['package']);
             }
 
             $afterDataMigratedEvent = new AfterDataMigratedEvent($data, $record, $migrationInstructions, $this);
@@ -115,14 +115,8 @@ class UpgradeUtility
         }
     }
 
-    protected function addData(array &$data, array $record, string $oldFieldName, string $newFieldName, array $migrationInstruction, array $parentDceConfiguration, Package $package): void
+    protected function addData(array &$data, array $record, string $oldFieldName, string $newFieldName, array $migrationInstruction, array $dceField, Package $package): void
     {
-        if (array_key_exists('identifier', $parentDceConfiguration)) {
-            $dceField = $this->dceRepository->fetchFieldByParentDce($parentDceConfiguration['uid'], $oldFieldName);
-        } else {
-            $dceField = $this->dceRepository->fetchFieldByParentField($parentDceConfiguration['uid'], $oldFieldName);
-        }
-
         if ($migrationInstruction['value'] ?? null && is_callable($migrationInstruction['value'])) {
             $flexFormData = ($record['pi_flexform'] ?? null) ? $this->flexFormService->convertFlexFormContentToArray($record['pi_flexform'])['settings'] : [];
             $data[$newFieldName] = $migrationInstruction['value']($flexFormData, $record);
@@ -286,7 +280,7 @@ class UpgradeUtility
                     $recordData = $section['container_' . $oldFieldName] ?? [];
                     $recordData['uid'] = $record['uid'];
                     $recordData['tableName'] = 'tt_content';
-                    $this->addData($data, $recordData, $oldChildFieldName, $newChildFieldName, $migrationInstruction, $dceField, $package);
+                    $this->addData($data, $recordData, $oldChildFieldName, $newChildFieldName, $migrationInstruction, $childField, $package);
                 }
             } else {
                 $childData = [];
@@ -301,7 +295,7 @@ class UpgradeUtility
                     $recordData = $section['container_' . $oldFieldName] ?? [];
                     $recordData['uid'] = $tableName . '_' . $newId;
                     $recordData['tableName'] = $tableName;
-                    $this->addData($childData, $recordData, $oldChildFieldName, $newChildFieldName, $migrationInstruction, $dceField, $package);
+                    $this->addData($childData, $recordData, $oldChildFieldName, $newChildFieldName, $migrationInstruction, $childField, $package);
                 }
                 $childData[$migrationInstructions['foreign_field'] ?? 'foreign_table_parent_uid'] = $record['uid'];
                 $this->connection->insert(
