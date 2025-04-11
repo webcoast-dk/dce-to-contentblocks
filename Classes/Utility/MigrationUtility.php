@@ -270,21 +270,35 @@ readonly class MigrationUtility
             $fieldConfiguration['type'] = 'Tab';
         } elseif ((int) $dceField['type'] === 2) {
             if (!($fieldConfiguration['useExistingField'] ?? false)) {
-                // Section type
-                $extensionName = str_replace('_', '', $package->getValueFromComposerManifest('extra')?->{'typo3/cms'}?->{'extension-key'} ?? '');
-                $fieldConfiguration = array_replace_recursive(
-                    $fieldConfiguration,
-                    [
-                        'type' => 'Collection',
-                        'table' => $fieldMigrationConfig['table'] ?? 'tx_' . $extensionName . '_domain_model_' . $fieldConfiguration['identifier'],
-                    ]
-                );
+                if ($fieldMigrationConfig['traverse'] ?? false) {
+                    $childFields = $this->buildFieldsConfiguration($fieldMigrationConfig, $dceField, $package);
+                    $newFieldName = $fieldMigrationConfig['fieldName'] ?? $dceField['variable'];
+                    $childFieldConfiguration = array_filter($childFields, function ($childField) use ($newFieldName) {
+                        return $childField['identifier'] === $newFieldName;
+                    })[0] ?? null;
 
-                if ($fieldMigrationConfig['foreign_field'] ?? null) {
-                    $fieldConfiguration['foreign_field'] = $fieldMigrationConfig['foreign_field'];
+                    if (!$childFieldConfiguration) {
+                        throw new \RuntimeException(sprintf('Could not determine section field to use for traversing. Please check your migration instructions for field "%s".', $dceField['variable']), 1676581234);
+                    }
+
+                    $fieldConfiguration = array_replace_recursive($childFieldConfiguration, $fieldConfiguration);
+                } else {
+                    // Section type
+                    $extensionName = str_replace('_', '', $package->getValueFromComposerManifest('extra')?->{'typo3/cms'}?->{'extension-key'} ?? '');
+                    $fieldConfiguration = array_replace_recursive(
+                        $fieldConfiguration,
+                        [
+                            'type' => 'Collection',
+                            'table' => $fieldMigrationConfig['table'] ?? 'tx_' . $extensionName . '_domain_model_' . $fieldConfiguration['identifier'],
+                        ]
+                    );
+
+                    if ($fieldMigrationConfig['foreign_field'] ?? null) {
+                        $fieldConfiguration['foreign_field'] = $fieldMigrationConfig['foreign_field'];
+                    }
+
+
                 }
-
-                $fieldConfiguration['fields'] = $this->buildFieldsConfiguration($fieldMigrationConfig, $dceField, $package);
             }
         }
 
