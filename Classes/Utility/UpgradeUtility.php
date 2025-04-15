@@ -236,7 +236,7 @@ class UpgradeUtility
                         'identifier' => [
                             'uid_foreign' => $record['uid'],
                             'tablenames' => $record['tableName'] ?? 'tt_content',
-                            'fieldname' => 'settings.' . $oldFieldName,
+                            'fieldname' => $oldFieldName,
                         ]
                     ]
                 ],
