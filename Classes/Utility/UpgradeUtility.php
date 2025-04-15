@@ -54,7 +54,11 @@ class UpgradeUtility
             foreach ($dceFields as $dceField) {
                 $oldField = $dceField['variable'];
                 $migrationInstruction = $migrationInstructions['fields'][$oldField] ?? [];
-                $newFieldName = $migrationInstruction['fieldName'] ?? $oldField;
+                if ($migrationInstruction['fieldName']) {
+                    $newFieldName = $migrationInstruction['fieldName'];
+                } else {
+                    $newFieldName = $dceField['map_to'] !== '' ? $dceField['map_to'] : UniqueIdentifierCreator::createContentTypeIdentifier($migrationInstructions['vendor'] . '/' . $migrationInstructions['identifier']) . '_' . $oldField;
+                }
 
                 if (($migrationInstruction['skip'] ?? false) || (int) $dceField['type'] === 1) {
                     continue;
