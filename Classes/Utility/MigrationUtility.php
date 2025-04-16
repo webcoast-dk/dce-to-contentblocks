@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace WEBcoast\DceToContentblocks\Utility;
 
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use TYPO3\CMS\ContentBlocks\Builder\ContentBlockBuilder;
 use TYPO3\CMS\ContentBlocks\Definition\ContentType\ContentType;
 use TYPO3\CMS\ContentBlocks\Definition\ContentType\ContentTypeIcon;
@@ -15,7 +16,6 @@ use TYPO3\CMS\Core\Core\Environment;
 use TYPO3\CMS\Core\Imaging\IconRegistry;
 use TYPO3\CMS\Core\Package\Package;
 use TYPO3\CMS\Core\Resource\FileRepository;
-use TYPO3\CMS\Core\Utility\ArrayUtility;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use WEBcoast\DceToContentblocks\Exception\SkipFieldException;
 use WEBcoast\DceToContentblocks\Repository\DceRepository;
@@ -25,7 +25,9 @@ readonly class MigrationUtility
     public function __construct(
         protected DceRepository $dceRepository,
         protected ContentBlockRegistry $contentBlockRegistry,
-        protected ContentBlockBuilder $contentBlockBuilder
+        protected ContentBlockBuilder $contentBlockBuilder,
+        #[Autowire(service: 'webcoast.dce_to_contentblocks.ordered_migrators')]
+        protected array $fieldConfigurationMigrators
     ) {}
 
     public function createContentBlockConfiguration(int|string $dceIdentifier, array $migrationInstructions): void
@@ -61,7 +63,44 @@ readonly class MigrationUtility
             'prefixType' => $migrationInstructions['prefixType'] ?? 'full',
         ];
 
-        $configuration['fields'] = $this->buildFieldsConfiguration($migrationInstructions, $dceConfiguration, $package);
+        if ($dceConfiguration['enable_container'] ?? false) {
+            $containerFields = $this->buildFieldsConfiguration($migrationInstructions['container']['fields'], $dceConfiguration, $package, false, true);
+            $labels = [];
+            $columnsOverrides = [];
+            $fieldIdentifiers = array_column($containerFields, 'identifier');
+            $containerFields = array_map(function ($field, $fieldName) use ($package, &$labels, &$columnsOverrides, $configuration) {
+                unset($field['identifier']);
+                $labelKey = 'tt_content.' . $fieldName . '.label';
+                if ($field['useExistingField'] ?? false) {
+                    $labelKey = 'tt_content.' . $fieldName . '.types.' . $configuration['typeName'] . '.label';
+                    $labels[$labelKey] = $field['label'];
+                    unset($field['useExistingField'], $field['label']);
+                    $columnsOverrides[$fieldName]['config'] = $field;
+                    $field = null;
+                } else {
+                    $labels[$labelKey] = $field['label'];
+                    unset($field['label']);
+                }
+
+                return [
+                    'label' => 'LLL:EXT:' . $package->getValueFromComposerManifest('extra')->{'typo3/cms'}->{'extension-key'} . '/Resources/Private/Language/locallang_db.xlf:' . $labelKey,
+                    'config' => $field
+                ];
+            }, $containerFields, array_column($containerFields, 'identifier'));
+            $containerFields = array_combine($fieldIdentifiers, $containerFields);
+
+            $containerCType = UniqueIdentifierCreator::createContentTypeIdentifier($fullName) . '_container';
+            $tcaOverridesFile = GeneralUtility::getFileAbsFileName('EXT:' . $package->getValueFromComposerManifest('extra')->{'typo3/cms'}->{'extension-key'} . '/Configuration/TCA/Overrides/tt_content.php');
+            TcaUtility::addContainerConfigurationToTcaOverrides($tcaOverridesFile, $containerCType, $dceConfiguration['wizard_category'] ?? 'container', ['CType' => UniqueIdentifierCreator::createContentTypeIdentifier($fullName)], $dceConfiguration['container_item_limit'] ?? 0);
+            TcaUtility::addColumDefinitionsToTcaOverrides($tcaOverridesFile, $containerFields, $columnsOverrides, $containerCType);
+            $xliffFile = GeneralUtility::getFileAbsFileName('EXT:' . $package->getValueFromComposerManifest('extra')->{'typo3/cms'}->{'extension-key'} . '/Resources/Private/Language/locallang_db.xlf');
+            $labels['tt_content.CType.' . $containerCType . '.label'] = $configuration['title'] . ' Container';
+            $labels['tt_content.CType.' . $containerCType . '.description'] = 'Description for ' . $configuration['title'] . ' Container';
+            $labels['tt_content.CType.' . $containerCType . '.content'] = 'Content';
+            XliffUtility::addLabelsToFile($xliffFile, $labels, $package->getValueFromComposerManifest('extra')->{'typo3/cms'}->{'extension-key'});
+        }
+
+        $configuration['fields'] = $this->buildFieldsConfiguration($migrationInstructions['fields'], $dceConfiguration, $package);
 
         if (count(array_intersect(['space_before_class', 'space_after_class', 'layout', 'frame_class'], GeneralUtility::trimExplode(',', $dceConfiguration['palette_fields'])))) {
             $configuration['basics'][] = 'TYPO3/Appearance';
@@ -81,7 +120,7 @@ readonly class MigrationUtility
         );
     }
 
-    private function buildFieldsConfiguration(array $migrationInstructions, array $dceConfiguration, Package $package): array
+    private function buildFieldsConfiguration(array $migrationInstructions, array $dceConfiguration, Package $package, bool $convertType = true, bool $onlyFieldsWithMigrationInstructions = false): array
     {
         if (array_key_exists('identifier', $dceConfiguration)) {
             $dceFields = $this->dceRepository->fetchFieldsByParentDce($dceConfiguration['uid']);
@@ -92,7 +131,7 @@ readonly class MigrationUtility
         $fields = [];
         foreach ($dceFields as $dceField) {
             try {
-                $fields[] = $this->buildFieldConfiguration($migrationInstructions, $dceField, $package);
+                $fields[] = $this->buildFieldConfiguration($migrationInstructions[$dceField['variable']] ?? [], $dceField, $package, $convertType, $onlyFieldsWithMigrationInstructions);
             } catch (SkipFieldException $e) {
             }
         }
@@ -100,9 +139,12 @@ readonly class MigrationUtility
         return $fields;
     }
 
-    protected function buildFieldConfiguration(array $migrationInstructions, array $dceField, Package $package): array
+    protected function buildFieldConfiguration(array $fieldMigrationConfig, array $dceField, Package $package, bool $convertType, bool $onlyFieldsWithMigrationInstructions): array
     {
-        $fieldMigrationConfig = $migrationInstructions['fields'][$dceField['variable']] ?? [];
+        if ($onlyFieldsWithMigrationInstructions && !$fieldMigrationConfig) {
+            throw new SkipFieldException('Field should be skipped');
+        }
+
         $fieldConfiguration = [
             'identifier' => $dceField['map_to'] ?: ($fieldMigrationConfig['fieldName'] ?? $dceField['variable']),
             'label' => $dceField['title']
@@ -122,148 +164,38 @@ readonly class MigrationUtility
         if ((int) $dceField['type'] === 0) {
             $config = GeneralUtility::xml2array($dceField['configuration']) ?? [];
 
-            $fieldConfiguration['type'] = match ($config['type']) {
-                'category' => 'Category',
-                'check' => 'Checkbox',
-                'color' => 'Color',
-                'datetime' => 'DateTime',
-                'email' => 'Email',
-                'file' => 'File',
-                'flex' => 'FlexForm',
-                'folder' => 'Folder',
-                'group' => 'Relation',
-                'imageManipulation' => 'ImageManipulation',
-                'inline' => 'Collection',
-                'input' => 'Text',
-                'json' => 'Json',
-                'language' => 'Language',
-                'link' => 'Link',
-                'none' => 'None',
-                'number' => 'Number',
-                'passthrough' => 'Pass',
-                'password' => 'Password',
-                'radio' => 'Radio',
-                'select' => 'Select',
-                'slug' => 'Slug',
-                'text' => 'Textarea',
-                'uuid' => 'Uuid',
-            };
-
-            unset($config['type']);
-
-            if ($fieldConfiguration['type'] === 'Relation' && $config['internal_type'] === 'file') {
-                $fieldConfiguration['type'] = 'File';
-                $fieldConfiguration['extendedPalette'] = true;
-                unset($config['internal_type'], $config['uploadfolder']);
-            } elseif ($fieldConfiguration['type'] === 'Relation' && $config['internal_type'] === 'folder') {
-                $fieldConfiguration['type'] = 'Folder';
-                unset($config['internal_type']);
-            } elseif ($fieldConfiguration['type'] === 'Relation' && $config['internal_type'] === 'db') {
-                unset($config['internal_type']);
-                if ($config['appearance']['elementBrowserType'] ?? '' === 'file') {
-                    $fieldConfiguration['type'] = 'File';
-                    unset($config['allowed'], $config['appearance']['elementBrowserType']);
-                    if ($config['appearance']['elementBrowserAllowed'] ?? null) {
-                        $fieldConfiguration['allowed'] = $config['appearance']['elementBrowserAllowed'];
-                        unset($config['appearance']['elementBrowserAllowed']);
-                    }
-                    if (empty($config['appearance'])) {
-                        unset($config['appearance']);
-                    }
-                }
-            } elseif ($fieldConfiguration['type'] === 'Collection' && $config['foreign_table'] === 'sys_file_reference') {
-                $fieldConfiguration['type'] = 'File';
-                if ($config['overrideChildTca']['columns']['uid_local']['config']['appearance']['elementBrowserAllowed'] ?? null) {
-                    $fieldConfiguration['allowed'] = $config['overrideChildTca']['columns']['uid_local']['config']['appearance']['elementBrowserAllowed'];
-                    unset($config['overrideChildTca']['columns']['uid_local']['config']['appearance']['elementBrowserType'], $config['overrideChildTca']['columns']['uid_local']['config']['appearance']['elementBrowserAllowed']);
-                    if (empty($config['overrideChildTca']['columns']['uid_local']['config']['appearance'])) {
-                        unset($config['overrideChildTca']['columns']['uid_local']['config']['appearance']);
-                    }
-                    if (empty($config['overrideChildTca']['columns']['uid_local']['config'])) {
-                        unset($config['overrideChildTca']['columns']['uid_local']['config']);
-                    }
-                    if (empty($config['overrideChildTca']['columns']['uid_local'])) {
-                        unset($config['overrideChildTca']['columns']['uid_local']);
-                    }
-                    if (empty($config['overrideChildTca']['columns'])) {
-                        unset($config['overrideChildTca']['columns']);
-                    }
-                    if (empty($config['overrideChildTca'])) {
-                        unset($config['overrideChildTca']);
-                    }
-                } elseif ($config['foreign_selector_fieldTcaOverride']['config']['appearance']['elementBrowserAllowed'] ?? null) {
-                    $fieldConfiguration['allowed'] = $config['foreign_selector_fieldTcaOverride']['config']['appearance']['elementBrowserAllowed'];
-                    unset($config['foreign_selector_fieldTcaOverride']['config']['appearance']['elementBrowserType'], $config['foreign_selector_fieldTcaOverride']['config']['appearance']['elementBrowserAllowed']);
-                    if (empty($config['foreign_selector_fieldTcaOverride']['config']['appearance'])) {
-                        unset($config['foreign_selector_fieldTcaOverride']['config']['appearance']);
-                    }
-                    if (empty($config['foreign_selector_fieldTcaOverride']['config'])) {
-                        unset($config['foreign_selector_fieldTcaOverride']['config']);
-                    }
-                    if (empty($config['foreign_selector_fieldTcaOverride'])) {
-                        unset($config['foreign_selector_fieldTcaOverride']);
-                    }
-                }
-                if ($config['foreign_types'] ?? null) {
-                    $fieldConfiguration['overrideChildTca']['types'] = $config['foreign_types'];
-                    unset($config['foreign_types']);
-                }
-                if ((string) ($config['appearance']['useSortable'] ?? 0) === '1') {
-                    unset($config['appearance']['useSortable']);
-                }
-                unset($config['foreign_table'], $config['foreign_field'], $config['foreign_sortby'], $config['foreign_table_field'], $config['foreign_match_fields'], $config['foreign_label'], $config['foreign_selector']);
-            } elseif ($fieldConfiguration['type'] === 'Select' && !($config['renderType'] ?? '')) {
-                $fieldConfiguration['renderType'] = 'selectSingle';
-            } elseif ($fieldConfiguration['type'] === 'Text' && ($config['renderType'] ?? '') === 'inputLink') {
-                $fieldConfiguration['type'] = 'Link';
-                unset($config['renderType']);
-            } elseif ($fieldConfiguration['type'] === 'Text' && ($config['renderType'] ?? '') === 'inputDateTime') {
-                $fieldConfiguration['type'] = 'DateTime';
-                unset($config['renderType']);
-                $eval = GeneralUtility::trimExplode(',', $config['eval'] ?? '');
-                if (in_array('date', $eval)) {
-                    $fieldConfiguration['format'] = 'date';
-                    ArrayUtility::removeArrayEntryByValue($eval, 'date');
-                } elseif (in_array('datetime', $eval)) {
-                    $fieldConfiguration['format'] = 'datetime';
-                    ArrayUtility::removeArrayEntryByValue($eval, 'datetime');
-                } elseif (in_array('time', $eval)) {
-                    $fieldConfiguration['format'] = 'time';
-                    ArrayUtility::removeArrayEntryByValue($eval, 'time');
-                } elseif (in_array('timesec', $eval)) {
-                    $fieldConfiguration['format'] = 'timesec';
-                    ArrayUtility::removeArrayEntryByValue($eval, 'timesec');
-                }
-                $config['eval'] = implode(',', $eval);
-            } elseif ($fieldConfiguration['type'] === 'Text' && ($config['renderType'] ?? '') === 'colorPicker') {
-                $fieldConfiguration['type'] = 'Color';
-                unset($config['renderType']);
+            foreach ($this->fieldConfigurationMigrators as $fieldConfigurationMigrator) {
+                $config = $fieldConfigurationMigrator->process($config);
             }
 
-            // Convert numbered select items to associative array with 0 => label and 1 => value
-            if ($fieldConfiguration['type'] === 'Select' && $config['items'] ?? null) {
-                foreach ($config['items'] as &$item) {
-                    if (is_array($item)) {
-                        $item['label'] = $item[0];
-                        $item['value'] = $item[1];
-                        unset($item[0], $item[1]);
-                    }
-                }
+            if ($convertType) {
+                $config['type'] = match ($config['type']) {
+                    'category' => 'Category',
+                    'check' => 'Checkbox',
+                    'color' => 'Color',
+                    'datetime' => 'DateTime',
+                    'email' => 'Email',
+                    'file' => 'File',
+                    'flex' => 'FlexForm',
+                    'folder' => 'Folder',
+                    'group' => 'Relation',
+                    'imageManipulation' => 'ImageManipulation',
+                    'inline' => 'Collection',
+                    'input' => 'Text',
+                    'json' => 'Json',
+                    'language' => 'Language',
+                    'link' => 'Link',
+                    'none' => 'None',
+                    'number' => 'Number',
+                    'passthrough' => 'Pass',
+                    'password' => 'Password',
+                    'radio' => 'Radio',
+                    'select' => 'Select',
+                    'slug' => 'Slug',
+                    'text' => 'Textarea',
+                    'uuid' => 'Uuid',
+                };
             }
-
-            // Extract `required` from `eval` into field configuration
-            if ($config['eval'] ?? '') {
-                $eval = GeneralUtility::trimExplode(',', $config['eval']);
-                if (in_array('required', $eval)) {
-                    $fieldConfiguration['required'] = true;
-                    $eval = ArrayUtility::removeArrayEntryByValue($eval, 'required');
-                }
-                $config['eval'] = implode(',', $eval);
-            }
-
-            $config = array_filter($config, function ($key) {
-                return !str_starts_with($key, 'dce_');
-            }, ARRAY_FILTER_USE_KEY);
 
             $fieldConfiguration = array_replace_recursive($fieldConfiguration, $config);
         } elseif ((int) $dceField['type'] === 1) {
@@ -297,7 +229,7 @@ readonly class MigrationUtility
                         $fieldConfiguration['foreign_field'] = $fieldMigrationConfig['foreign_field'];
                     }
 
-
+                    $fieldConfiguration['fields'] = $this->buildFieldsConfiguration($fieldMigrationConfig['fields'], $dceField, $package);
                 }
             }
         }

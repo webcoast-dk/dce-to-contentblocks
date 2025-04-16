@@ -13,11 +13,14 @@ use TYPO3\CMS\Core\Database\Connection;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Package\Package;
 use TYPO3\CMS\Core\Resource\FileInterface;
+use TYPO3\CMS\Core\Resource\FileRepository;
 use TYPO3\CMS\Core\Resource\StorageRepository;
 use TYPO3\CMS\Core\Service\FlexFormService;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\StringUtility;
 use WEBcoast\DceToContentblocks\Event\AfterDataMigratedEvent;
+use WEBcoast\DceToContentblocks\Event\AfterSectionDataMigratedEvent;
+use WEBcoast\DceToContentblocks\Event\ContainerCreatedEvent;
 use WEBcoast\DceToContentblocks\Repository\DceRepository;
 use WEBcoast\DceToContentblocks\Update\MigrationHelperInterface;
 
@@ -30,6 +33,10 @@ class UpgradeUtility
     public array $insertStack = [];
 
     public array $updateStack = [];
+
+    protected array $lastContainerIds = [];
+
+    protected array $preMigrationElementsByPid = [];
 
     public function __construct(ConnectionPool $connectionPool, protected DceRepository $dceRepository, protected FlexFormService $flexFormService, protected EventDispatcherInterface $eventDispatcher)
     {
@@ -68,6 +75,35 @@ class UpgradeUtility
             $data = $afterDataMigratedEvent->getData();
 
             $data['CType'] = UniqueIdentifierCreator::createContentTypeIdentifier($migrationInstructions['vendor'] . '/' . $migrationInstructions['identifier']);
+
+            if ($dceConfiguration['enable_container'] ?? false) {
+                // Find the first content element in a row of type $record['CType'] from the same pid
+                if (
+                    $this->isFirstOfConsecutiveRecords($record, $dceConfiguration['container_item_limit'] ?: PHP_INT_MAX)
+                    || $record['tx_dce_new_container'] ?? false
+                ) {
+                    $containerData = [
+                        'pid' => $record['pid'],
+                        'colPos' => $record['colPos'],
+                        'sys_language_uid' => $record['sys_language_uid'],
+                        'CType' => UniqueIdentifierCreator::createContentTypeIdentifier($migrationInstructions['vendor'] . '/' . $migrationInstructions['identifier']) . '_container',
+                        'sorting' => $record['sorting'],
+                    ];
+                    if ($record['sys_language_uid'] > 0 && $record['l18n_parent'] > 0) {
+                        $originalLanguageRecord = $this->connection->select(['*'], 'tt_content', ['uid' => $record['l18n_parent']])->fetchAssociative();
+                        $containerData['l18n_parent'] = $originalLanguageRecord['tx_container_parent'] ?? 0;
+                    }
+                    $this->connection->insert('tt_content', $containerData);
+
+                    $lastContainerId = $this->lastContainerIds[$record['pid'] . '-' . $record['colPos'] . '-' . $record['sys_language_uid']] = (int) $this->connection->lastInsertId();
+
+                    $containerCreatedEvent = new ContainerCreatedEvent($lastContainerId, $record, $dceConfiguration, $migrationInstructions, $this);
+                    $this->eventDispatcher->dispatch($containerCreatedEvent);
+                }
+
+                $data['tx_container_parent'] = $this->lastContainerIds[$record['pid'] . '-' . $record['colPos'] . '-' . $record['sys_language_uid']];
+                $data['colPos'] = 100;
+            }
 
             $this->connection->update(
                 'tt_content',
@@ -115,7 +151,7 @@ class UpgradeUtility
         }
     }
 
-    protected function addData(array &$data, array $record, string $oldFieldName, string $newFieldName, array $migrationInstruction, array $dceField, Package $package): void
+    public function addData(array &$data, array $record, string $oldFieldName, string $newFieldName, array $migrationInstruction, array $dceField, Package $package): void
     {
         if ($migrationInstruction['value'] ?? null && is_callable($migrationInstruction['value'])) {
             $flexFormData = ($record['pi_flexform'] ?? null) ? $this->flexFormService->convertFlexFormContentToArray($record['pi_flexform'])['settings'] : [];
@@ -152,8 +188,7 @@ class UpgradeUtility
 
             /** @var StorageRepository $storageRepository */
             $storageRepository = GeneralUtility::makeInstance(StorageRepository::class);
-            $fileReferencesToInsert = [];
-            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record);
+            $fileReferencesCounter = 0;
             foreach ($filesNames as $fileName) {
                 $fileIdentifier = ltrim(($dceFieldConfiguration['uploadfolder'] ?? '') . '/' . $fileName, '/');
                 $folderName = dirname($fileIdentifier);
@@ -166,47 +201,31 @@ class UpgradeUtility
                     $targetFolder = $targetStorage->getFolder($folderName);
                 }
                 $targetStorage->copyFile($file, $targetFolder, $file->getName());
-                $fileReferenceData = [
-                    'uid_local' => $file->getUid(),
-                    'uid_foreign' => $record['uid'],
-                    'tablenames' => $record['tableName'] ?? 'tt_content',
-                    'fieldname' => $newFieldName,
-                    'sorting_foreign' => ($otherFileReferencesCount + count($fileReferencesToInsert) + 1) * 256,
-                ];
-
-                $this->addFileReferenceData($fileReferenceData, $migrationInstruction, $flexFormData);
-
-                $fileReferencesToInsert[] = $fileReferenceData;
+                $languageField = $GLOBALS['TCA'][$record['tableName'] ?? 'tt_content']['ctrl']['languageField'] ?? null;
+                $languageId = $languageField ? $record[$languageField] ?? 0 : 0;
+                $this->addFileReference($file, $record['uid'], $record['pid'], $languageId, $record['tableName'] ?? 'tt_content', $newFieldName, $this->buildFileMetaData($migrationInstruction, $flexFormData));
+                ++$fileReferencesCounter;
             }
-            array_unshift($this->insertStack, [
-                'sys_file_reference' => $fileReferencesToInsert,
-            ]);
-            $data[$newFieldName] = count($fileReferencesToInsert);
+            $data[$newFieldName] = $fileReferencesCounter;
         } elseif ($dceFieldConfiguration['type'] === 'group' && $dceFieldConfiguration['internal_type'] === 'db' && ($dceFieldConfiguration['appearance']['elementBrowserType'] ?? '') === 'file') {
             if ($migrationInstruction['mergeWith'] ?? null) {
                 $newFieldName = $migrationInstruction['mergeWith'];
             }
             $fileIds = GeneralUtility::intExplode(',', $flexFormData[$oldFieldName], true);
-            $fileReferencesToInsert = [];
-            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record);
+            $fileReferencesCounter = 0;
             foreach ($fileIds as $fileId) {
-                $fileReferenceData = [
-                    'uid_local' => $fileId,
-                    'uid_foreign' => $record['uid'],
-                    'tablenames' => $record['tableName'] ?? 'tt_content',
-                    'fieldname' => $newFieldName,
-                    'sorting_foreign' => ($otherFileReferencesCount + count($fileReferencesToInsert) + 1) * 256,
-                ];
+                $fileRepository = GeneralUtility::makeInstance(FileRepository::class);
+                $file = $fileRepository->findByUid($fileId);
 
-                $fileReferenceData = $this->addFileReferenceData($fileReferenceData, $migrationInstruction, $flexFormData);
-
-                $fileReferencesToInsert[] = $fileReferenceData;
+                if ($file) {
+                    $languageField = $GLOBALS['TCA'][$record['tableName'] ?? 'tt_content']['ctrl']['languageField'] ?? null;
+                    $languageId = $languageField ? $record[$languageField] ?? 0 : 0;
+                    $this->addFileReference($file, $record['uid'], $record['pid'], $languageId, $record['tableName'] ?? 'tt_content', $newFieldName, $this->buildFileMetaData($migrationInstruction, $flexFormData));
+                    ++$fileReferencesCounter;
+                }
             }
 
-            array_unshift($this->insertStack, [
-                'sys_file_reference' => $fileReferencesToInsert,
-            ]);
-            $data[$newFieldName] = count($fileReferencesToInsert);
+            $data[$newFieldName] = $fileReferencesCounter;
         } elseif (
             (
                 $dceFieldConfiguration['type'] === 'inline'
@@ -217,13 +236,9 @@ class UpgradeUtility
             if ($migrationInstruction['mergeWith'] ?? null) {
                 $newFieldName = $migrationInstruction['mergeWith'];
             }
-            $otherFileReferencesCount = $this->countFileReferenceForField($newFieldName, $record);
             $fileReferenceData = [
                 'fieldname' => $newFieldName,
-                'sorting_foreign' => ($otherFileReferencesCount + 1) * 256,
             ];
-
-            $fileReferenceData = $this->addFileReferenceData($fileReferenceData, $migrationInstruction, $flexFormData);
 
             array_unshift($this->updateStack, [
                 'sys_file_reference' => [
@@ -297,6 +312,9 @@ class UpgradeUtility
                     $recordData['tableName'] = $tableName;
                     $this->addData($childData, $recordData, $oldChildFieldName, $newChildFieldName, $migrationInstruction, $childField, $package);
                 }
+                $afterSectionDataMigratedEvent = new AfterSectionDataMigratedEvent($data, $record, $section, $newId, $tableName, $oldFieldName, $newFieldName, $migrationInstructions, $this);
+                $this->eventDispatcher->dispatch($afterSectionDataMigratedEvent);
+                $data = $afterSectionDataMigratedEvent->getData();
                 $childData[$migrationInstructions['foreign_field'] ?? 'foreign_table_parent_uid'] = $record['uid'];
                 $this->connection->insert(
                     $tableName,
@@ -304,6 +322,7 @@ class UpgradeUtility
                 );
                 $this->substNEWwithIDs[$tableName . '_' . $newId] = $this->connection->lastInsertId();
             }
+
 
             ++$count;
         }
@@ -342,26 +361,23 @@ class UpgradeUtility
         return count($insertFileReferences) + count($otherFileReferences);
     }
 
-    protected function addFileReferenceData(array $fileReferenceData, array $migrationInstruction, array $flexFormData): array
+    protected function buildFileMetaData(array $migrationInstruction, array $flexFormData): array
     {
+        $metaData = [];
         foreach ($migrationInstruction['fields'] ?? [] as $fieldName => $fieldConfiguration) {
-            if (array_key_exists($fieldName, $fileReferenceData)) {
-                continue;
-            }
-
             if ($fieldConfiguration['dataFrom'] ?? null && ($flexFormData[$fieldConfiguration['dataFrom']] ?? null)) {
                 if ($fieldConfiguration['trim'] ?? false) {
-                    $fileReferenceData[$fieldName] = trim($flexFormData[$fieldConfiguration['dataFrom']]);
+                    $metaData[$fieldName] = trim($flexFormData[$fieldConfiguration['dataFrom']]);
                 } else {
-                    $fileReferenceData[$fieldName] = $flexFormData[$fieldConfiguration['dataFrom']];
+                    $metaData[$fieldName] = $flexFormData[$fieldConfiguration['dataFrom']];
                 }
             }
         }
 
-        return $fileReferenceData;
+        return $metaData;
     }
 
-    public function addFileReference(FileInterface $file, int $recordUid, int $pid, string $table, string $fieldName, array $metaData = [])
+    public function addFileReference(FileInterface $file, int|string $recordUid, int $pid, int $languageId, string $table, string $fieldName, array $metaData = [])
     {
         $countFileReferences = $this->countFileReferenceForField($fieldName, ['uid' => $recordUid]);
         $this->insertStack[] = [
@@ -371,6 +387,7 @@ class UpgradeUtility
                         'pid' => $pid,
                         'uid_local' => $file->getUid(),
                         'uid_foreign' => $recordUid,
+                        'sys_language_uid' => $languageId,
                         'tablenames' => $table,
                         'fieldname' => $fieldName,
                         'table_local' => 'sys_file',
@@ -408,5 +425,48 @@ class UpgradeUtility
                 )
             ]
         ];
+    }
+
+    protected function isFirstOfConsecutiveRecords(array $currentRecord, int $maxItemsInRow = PHP_INT_MAX): bool
+    {
+        // Fetch all records with the same colPos, sys_language_uid, and pid
+        if (!($this->preMigrationElementsByPid[$currentRecord['pid'] . '-' . $currentRecord['sys_language_uid'] . '-' . $currentRecord['colPos']] ?? null)) {
+            $this->preMigrationElementsByPid[$currentRecord['pid'] . '-' . $currentRecord['sys_language_uid'] . '-' . $currentRecord['colPos']] = $this->connection->select(
+                ['uid', 'CType'],
+                'tt_content',
+                [
+                    'colPos' => $currentRecord['colPos'],
+                    'sys_language_uid' => $currentRecord['sys_language_uid'],
+                    'pid' => $currentRecord['pid'],
+                ],
+                [],
+                ['sorting' => 'ASC']
+            )->fetchAllAssociative();
+        }
+
+        $records = $this->preMigrationElementsByPid[$currentRecord['pid'] . '-' . $currentRecord['sys_language_uid'] . '-' . $currentRecord['colPos']] ?? [];
+
+        $consecutiveCount = 0;
+
+        foreach ($records as $record) {
+            if ($record['CType'] === $currentRecord['CType']) {
+                ++$consecutiveCount;
+
+                // Check if the current record starts a new row
+                if ($record['uid'] === $currentRecord['uid'] && ($consecutiveCount - 1) % $maxItemsInRow === 0) {
+                    return true;
+                }
+
+                // Reset the count when the maxItemsInRow limit is reached
+                if ($consecutiveCount % $maxItemsInRow === 0) {
+                    $consecutiveCount = 0;
+                }
+            } else {
+                // Reset the count when a different CType is encountered
+                $consecutiveCount = 0;
+            }
+        }
+
+        return false;
     }
 }

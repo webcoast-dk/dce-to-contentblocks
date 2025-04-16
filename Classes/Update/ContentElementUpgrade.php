@@ -7,7 +7,6 @@ namespace WEBcoast\DceToContentblocks\Update;
 
 
 use Doctrine\DBAL\ArrayParameterType;
-use Doctrine\DBAL\ParameterType;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
@@ -58,6 +57,13 @@ readonly class ContentElementUpgrade implements UpgradeWizardInterface, Repeatab
                     $queryBuilder->expr()->eq('CType', $queryBuilder->createNamedParameter('dce_' . $dceIdentifier))
                 );
             }
+
+            // Make sure, we process element per page, language and colPos
+            $queryBuilder
+                ->orderBy('pid')
+                ->addOrderBy('sys_language_uid')
+                ->addOrderBy('colPos')
+                ->addOrderBy('sorting');
 
             $result = $queryBuilder->executeQuery();
 
