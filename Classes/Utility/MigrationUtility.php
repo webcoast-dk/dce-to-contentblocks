@@ -263,6 +263,7 @@ readonly class MigrationUtility
         }
 
         if ($templateContent) {
+            $templateContent = str_replace('field.', 'data.', $templateContent);
             GeneralUtility::writeFile(GeneralUtility::getFileAbsFileName($contentBlock->getExtPath() . '/' . $contentBlock->getPackage() . '/' . ContentBlockPathUtility::getFrontendTemplatePath()), $templateContent);
         }
     }
