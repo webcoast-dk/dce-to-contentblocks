@@ -21,8 +21,12 @@ abstract class RecordDataMigrator
 
     abstract public function migrate(array $flexFormData, array $record): array;
 
-    public function getTargetContentType()
+    public function getTargetContentType(): string
     {
+        if (empty($this->targetContentType)) {
+            throw new \RuntimeException(sprintf('Target content type is not set in "%s". Please set it in the constructor or override the property $targetContentType.', get_class($this)), 1745832058);
+        }
+
         return $this->targetContentType;
     }
 
