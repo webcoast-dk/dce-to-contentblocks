@@ -26,7 +26,6 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\StringUtility;
 use WEBcoast\DceToContentblocks\Repository\DceRepository;
 use WEBcoast\DceToContentblocks\Update\ContainerAwareRecordDataMigratorInterface;
-use WEBcoast\DceToContentblocks\Update\ContainerAwareRecordDataMigratorTrait;
 use WEBcoast\DceToContentblocks\Update\RecordDataMigratorFactory;
 
 class UpgradeUtility implements LoggerAwareInterface
