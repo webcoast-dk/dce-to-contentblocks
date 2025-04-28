@@ -8,6 +8,7 @@ namespace WEBcoast\DceToContentblocks\Command;
 
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
@@ -45,15 +46,37 @@ class MigrateConfigCommand extends Command
         $this->migrationUtility = $migrationUtility;
     }
 
+    protected function configure(): void
+    {
+        parent::configure();
+
+        $this->addArgument('dceIdentifier', InputArgument::OPTIONAL, 'The identifier of the DCE to migrate');
+    }
+
+    protected function interact(InputInterface $input, OutputInterface $output)
+    {
+        if (!$input->hasArgument('dceIdentifier') || !$input->getArgument('dceIdentifier')) {
+            $dces = $this->dceRepository->fetchAll()->fetchAllAssociative();
+            $style = new SymfonyStyle($input, $output);
+            $style->section('Available DCEs');
+            $style->table(['uid', 'title', 'identifier'], $dces);
+
+            $input->setArgument('dceIdentifier', $style->ask('Which DCE do you want to migrate?', null, function (string $dceIdentifier) use ($dces) {
+                if (empty($dceIdentifier) || (!in_array($dceIdentifier, array_column($dces, 'identifier')) && !in_array($dceIdentifier, array_column($dces, 'uid')))) {
+                    throw new \RuntimeException('Invalid DCE identifier');
+                }
+
+                return $dceIdentifier;
+            }));
+        }
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->io = new SymfonyStyle($input, $output);
 
-        $migrationConfiguration = $this->configurationUtility->buildMigrationConfiguration();
-
-        foreach ($migrationConfiguration as $dceIdentifier => $migrationInstructions) {
-            $this->migrationUtility->createContentBlockConfiguration($dceIdentifier, $migrationInstructions);
-        }
+        $this->migrationUtility->setIo($this->io);
+        $this->migrationUtility->migrate($input->getArgument('dceIdentifier'));
 
         return Command::SUCCESS;
     }

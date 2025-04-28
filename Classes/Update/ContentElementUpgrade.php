@@ -10,18 +10,16 @@ use Doctrine\DBAL\ArrayParameterType;
 use TYPO3\CMS\Core\Database\ConnectionPool;
 use TYPO3\CMS\Core\Database\Query\Restriction\DeletedRestriction;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
-use TYPO3\CMS\Core\Utility\MathUtility;
 use TYPO3\CMS\Install\Attribute\UpgradeWizard;
 use TYPO3\CMS\Install\Updates\DatabaseUpdatedPrerequisite;
 use TYPO3\CMS\Install\Updates\RepeatableInterface;
 use TYPO3\CMS\Install\Updates\UpgradeWizardInterface;
-use WEBcoast\DceToContentblocks\Utility\ConfigurationUtility;
 use WEBcoast\DceToContentblocks\Utility\UpgradeUtility;
 
 #[UpgradeWizard('dce-to-contentblocks-content-element-upgrade')]
 readonly class ContentElementUpgrade implements UpgradeWizardInterface, RepeatableInterface
 {
-    public function __construct(protected ConfigurationUtility $configurationUtility, protected UpgradeUtility $upgradeUtility) {}
+    public function __construct(protected RecordDataMigratorFactory $recordDataMigratorFactory, protected UpgradeUtility $upgradeUtility) {}
 
     public function getTitle(): string
     {
@@ -30,14 +28,12 @@ readonly class ContentElementUpgrade implements UpgradeWizardInterface, Repeatab
 
     public function getDescription(): string
     {
-        return 'Migrates all DCE based content elements to their new content-blocks implementation.';
+        return 'Migrates all DCE based content elements using custom data migration classes';
     }
 
     public function executeUpdate(): bool
     {
-        $migrationConfiguration = $this->configurationUtility->buildMigrationConfiguration();
-
-        foreach ($migrationConfiguration as $dceIdentifier => $migrationInstructions) {
+        foreach ($this->recordDataMigratorFactory->getSupportedContentTypes() as $contentType) {
             $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tt_content');
             $queryBuilder
                 ->getRestrictions()
@@ -46,17 +42,10 @@ readonly class ContentElementUpgrade implements UpgradeWizardInterface, Repeatab
 
             $queryBuilder
                 ->select('*')
-                ->from('tt_content');
-
-            if (is_int($dceIdentifier) || MathUtility::canBeInterpretedAsInteger($dceIdentifier)) {
-                $queryBuilder->where(
-                    $queryBuilder->expr()->eq('CType', $queryBuilder->createNamedParameter('dce_dceuid' . $dceIdentifier))
+                ->from('tt_content')
+                ->where(
+                    $queryBuilder->expr()->eq('CType', $queryBuilder->createNamedParameter($contentType))
                 );
-            } else {
-                $queryBuilder->where(
-                    $queryBuilder->expr()->eq('CType', $queryBuilder->createNamedParameter('dce_' . $dceIdentifier))
-                );
-            }
 
             // Make sure, we process element per page, language and colPos
             $queryBuilder
@@ -67,7 +56,7 @@ readonly class ContentElementUpgrade implements UpgradeWizardInterface, Repeatab
 
             $result = $queryBuilder->executeQuery();
 
-            $this->upgradeUtility->migrateContentElements($result, $migrationInstructions);
+            $this->upgradeUtility->migrateContentElements($result);
         }
 
         return true;
@@ -75,16 +64,6 @@ readonly class ContentElementUpgrade implements UpgradeWizardInterface, Repeatab
 
     public function updateNecessary(): bool
     {
-        $migrationConfiguration = $this->configurationUtility->buildMigrationConfiguration();
-
-        $dceContentElementIdentifiers = [];
-        foreach ($migrationConfiguration as $dceIdentifier => $migrationInstructions) {
-            if (is_int($dceIdentifier) || MathUtility::canBeInterpretedAsInteger($dceIdentifier)) {
-                $dceContentElementIdentifiers[] = 'dce_dceuid' . $dceIdentifier;
-            } else {
-                $dceContentElementIdentifiers[] = 'dce_' . $dceIdentifier;
-            }
-        }
         $queryBuilder = GeneralUtility::makeInstance(ConnectionPool::class)->getQueryBuilderForTable('tt_content');
         $queryBuilder
             ->getRestrictions()
@@ -95,7 +74,7 @@ readonly class ContentElementUpgrade implements UpgradeWizardInterface, Repeatab
             ->count('uid')
             ->from('tt_content')
             ->where(
-                $queryBuilder->expr()->in('CType', $queryBuilder->createNamedParameter($dceContentElementIdentifiers, ArrayParameterType::STRING))
+                $queryBuilder->expr()->in('CType', $queryBuilder->createNamedParameter($this->recordDataMigratorFactory->getSupportedContentTypes(), ArrayParameterType::STRING))
             );
 
         return $queryBuilder->executeQuery()->fetchOne() > 0;
