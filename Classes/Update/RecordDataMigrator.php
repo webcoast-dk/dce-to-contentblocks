@@ -17,6 +17,8 @@ abstract class RecordDataMigrator
 {
     protected array $referencedTableData = [];
 
+    protected array $commandMap = [];
+
     protected string $targetContentType = '';
 
     abstract public function migrate(array $flexFormData, array $record): array;
@@ -35,6 +37,11 @@ abstract class RecordDataMigrator
         return $this->referencedTableData;
     }
 
+    public function getCommandMap(): array
+    {
+        return $this->commandMap;
+    }
+
     protected function addReference($table, $data, null|int|string $uid = null): int|string
     {
         if ($uid) {
@@ -49,7 +56,7 @@ abstract class RecordDataMigrator
         return $newUid;
     }
 
-    protected function addFileReference(File $file, string $tableName, string $fieldName, int|string $recordUid, int $pid, int $languageId, array $metaData = [])
+    protected function addFileReference(File $file, string $tableName, string $fieldName, int|string $recordUid, int $pid, int $languageId, array $metaData = []): int|string
     {
         return $this->addReference('sys_file_reference', array_merge_recursive($metaData, [
             'pid' => $pid,
@@ -69,8 +76,25 @@ abstract class RecordDataMigrator
         ]), $fileReference->getUid());
     }
 
-    protected function clean(): void
+    protected function move(int|string $recordUid, array|int|string $destination, string $table = 'tt_content'): void
     {
-        $this->referencedTableData = [];
+        $this->commandMap[$table][$recordUid]['move'] = $destination;
+    }
+
+    protected function moveIntoContainer(int|string $recordUid, int|string $containerId, int $colPos, null|int|string $after = null): void
+    {
+        $this->move($recordUid, [
+            'update' => [
+                'tx_container_parent' => $containerId,
+                'colPos' => $colPos,
+            ],
+            'action' => 'paste',
+            'target' => $after ? '-' . $after : $containerId,
+        ]);
+    }
+
+    protected function localize(int $recordUid, int $languageId, string $table = 'tt_content'): void
+    {
+        $this->commandMap[$table][$recordUid]['localize'] = $languageId;
     }
 }

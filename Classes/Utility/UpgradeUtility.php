@@ -135,7 +135,7 @@ class UpgradeUtility implements LoggerAwareInterface
             /** @var DataHandler $dataHandler */
             $dataHandler = GeneralUtility::makeInstance(DataHandler::class);
             $dataHandler->bypassWorkspaceRestrictions = true;
-            $dataHandler->start($dataMap, []);
+            $dataHandler->start($dataMap, $recordDataMigrator->getCommandMap());
             $dataHandler->process_datamap();
             $dataHandler->process_cmdmap();
         }
