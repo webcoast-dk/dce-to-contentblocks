@@ -200,6 +200,18 @@ class UpgradeUtility implements LoggerAwareInterface
                     $data[$dceField['variable']][] = $resourceFactory->getFileReferenceObject($referenceUid);
                 }
             }
+
+            $relationHandler->initializeForField('tt_content', array_replace_recursive($dceFieldConfiguration, ['foreign_match_fields' => ['fieldname' => str_replace('{$variable}', $dceField['variable'], $dceFieldConfiguration['foreign_match_fields']['fieldname'])]]), $record['uid']);
+            if (!empty($relationHandler->tableArray['sys_file_reference'])) {
+                $relationHandler->processDeletePlaceholder();
+                $referenceUids = $relationHandler->tableArray['sys_file_reference'];
+
+                /** @var ResourceFactory $resourceFactory */
+                $resourceFactory = GeneralUtility::makeInstance(ResourceFactory::class);
+                foreach ($referenceUids as $referenceUid) {
+                    $data[$dceField['variable']][] = $resourceFactory->getFileReferenceObject($referenceUid);
+                }
+            }
         } else {
             $data[$dceField['variable']] = $rawFlexFormData[$dceField['variable']] ?? '';
         }
