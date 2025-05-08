@@ -65,7 +65,6 @@ abstract class RecordDataMigrator
             'sys_language_uid' => $languageId,
             'tablenames' => $tableName,
             'fieldname' => $fieldName,
-            'table_local' => 'sys_file',
         ]));
     }
 
