@@ -73,10 +73,9 @@ class UpgradeUtility implements LoggerAwareInterface
             $recordDataMigrator = $this->recordDataMigratorFactory->getMigrator($record['CType']);
             $dataMap = [
                 'tt_content' => [
-                    $record['uid'] => array_replace_recursive($record, $recordDataMigrator->migrate($data, $record)),
+                    $record['uid'] => $recordDataMigrator->migrate($data, $record),
                 ],
             ];
-            $dataMap['tt_content'][$record['uid']]['CType'] = $recordDataMigrator->getTargetContentType();
 
             if (($dceConfiguration['enable_container'] ?? false) && $recordDataMigrator instanceof ContainerAwareRecordDataMigratorInterface) {
                 // Find the first content element in a row of type $record['CType'] from the same pid
@@ -131,6 +130,17 @@ class UpgradeUtility implements LoggerAwareInterface
             } else {
                 Bootstrap::initializeBackendUser(BackendUserAuthentication::class, ServerRequestFactory::fromGlobals());
             }
+
+            // Update the CType beforehand, because some data handling logic relies on the new CType
+            $this->connection->update(
+                'tt_content',
+                [
+                    'CType' => $recordDataMigrator->getTargetContentType(),
+                ],
+                [
+                    'uid' => $record['uid'],
+                ]
+            );
 
             /** @var DataHandler $dataHandler */
             $dataHandler = GeneralUtility::makeInstance(DataHandler::class);
