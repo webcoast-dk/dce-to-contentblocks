@@ -26,6 +26,7 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 use TYPO3\CMS\Core\Utility\StringUtility;
 use WEBcoast\DceToContentblocks\Repository\DceRepository;
 use WEBcoast\DceToContentblocks\Update\ContainerAwareRecordDataMigratorInterface;
+use WEBcoast\DceToContentblocks\Update\NewIdMappingAwareInterface;
 use WEBcoast\DceToContentblocks\Update\RecordDataMigratorFactory;
 
 class UpgradeUtility implements LoggerAwareInterface
@@ -148,6 +149,10 @@ class UpgradeUtility implements LoggerAwareInterface
             $dataHandler->start($dataMap, $recordDataMigrator->getCommandMap());
             $dataHandler->process_datamap();
             $dataHandler->process_cmdmap();
+
+            if ($recordDataMigrator instanceof NewIdMappingAwareInterface) {
+                $recordDataMigrator->setNewIdMappings($dataHandler->substNEWwithIDs);
+            }
         }
     }
 
