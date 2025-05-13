@@ -173,7 +173,7 @@ class UpgradeUtility implements LoggerAwareInterface
 
         $dceFieldConfiguration = GeneralUtility::xml2array($dceField['configuration'] ?? '') ?? [];
         if ($dceFieldConfiguration['type'] === 'group' && ($dceFieldConfiguration['internal_type'] ?? '') === 'file') {
-            $filesNames = GeneralUtility::trimExplode(',', $flexFormData[$dceField['variable']] ?? '', true);
+            $filesNames = GeneralUtility::trimExplode(',', $rawFlexFormData[$dceField['variable']] ?? '', true);
 
             $data[$dceField['variable']] = [];
 
