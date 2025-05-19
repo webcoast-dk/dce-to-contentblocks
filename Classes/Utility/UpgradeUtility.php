@@ -127,10 +127,10 @@ class UpgradeUtility implements LoggerAwareInterface
                     'uid' => 0,
                     'admin' => 1,
                 ];
-                $GLOBALS['BE_USER']->workspace = 0;
             } else {
                 Bootstrap::initializeBackendUser(BackendUserAuthentication::class, ServerRequestFactory::fromGlobals());
             }
+            $GLOBALS['BE_USER']->workspace = 0;
 
             // Update the CType beforehand, because some data handling logic relies on the new CType
             $this->connection->update(
