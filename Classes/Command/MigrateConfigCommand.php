@@ -14,7 +14,6 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Contracts\Service\Attribute\Required;
 use WEBcoast\DceToContentblocks\Repository\DceRepository;
-use WEBcoast\DceToContentblocks\Utility\ConfigurationUtility;
 use WEBcoast\DceToContentblocks\Utility\MigrationUtility;
 
 #[AsCommand('dce:migrate', 'Migrate DCE to content blocks')]
@@ -24,20 +23,12 @@ class MigrateConfigCommand extends Command
 
     protected DceRepository $dceRepository;
 
-    protected ConfigurationUtility $configurationUtility;
-
     protected MigrationUtility $migrationUtility;
 
     #[Required]
     public function setDceRepository(DceRepository $dceRepository): void
     {
         $this->dceRepository = $dceRepository;
-    }
-
-    #[Required]
-    public function setConfigurationUtility(ConfigurationUtility $configurationUtility): void
-    {
-        $this->configurationUtility = $configurationUtility;
     }
 
     #[Required]
