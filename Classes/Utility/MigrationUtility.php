@@ -124,7 +124,7 @@ readonly class MigrationUtility
             ContentType::CONTENT_ELEMENT
         );
 
-        $this->io->block('Configuration finished, saving content block "' . $contentBlock->getName() . '"', style: 'bg=green;fg=white', padding: true);
+        $this->io->block('Configuration finished, saving content block "' . $contentBlock->getName() . '"', style: 'bg=green;fg=black', padding: true);
 
         $this->contentBlockBuilder->create($contentBlock);
         $this->copyTemplate($dceConfiguration, $contentBlock);
