@@ -221,7 +221,7 @@ class UpgradeUtility implements LoggerAwareInterface
 
     protected function addDataForSection(array &$data, array $rawFlexFormData, array $record, array $dceField): void
     {
-        $sections = $rawFlexFormData[$dceField['variable']] ?? [];
+        $sections = $rawFlexFormData[$dceField['variable']] ?? [] ?: [];
         $data[$dceField['variable']] = [];
 
         foreach ($sections as $section) {
