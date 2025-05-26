@@ -56,7 +56,7 @@ class UpgradeUtility implements LoggerAwareInterface
     {
         while ($record = $result->fetchAssociative()) {
 
-            $rawFlexFormData = $this->flexFormService->convertFlexFormContentToArray($record['pi_flexform'])['settings'] ?? [];
+            $rawFlexFormData = $this->flexFormService->convertFlexFormContentToArray($record['pi_flexform'] ?? '')['settings'] ?? [];
             $data = [];
 
             if (str_starts_with($record['CType'], 'dce_dceuid')) {
