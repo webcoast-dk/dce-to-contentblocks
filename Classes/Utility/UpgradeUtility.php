@@ -62,7 +62,7 @@ class UpgradeUtility implements LoggerAwareInterface
             if (str_starts_with($record['CType'], 'dce_dceuid')) {
                 $dceIdentifier = (int) str_replace('dce_dceuid', '', $record['CType']);
             } else {
-                $dceIdentifier = str_replace('dce_', '', $record['CType']);
+                $dceIdentifier = substr($record['CType'], 4);
             }
 
             $dceConfiguration = $this->dceRepository->getConfiguration($dceIdentifier);
