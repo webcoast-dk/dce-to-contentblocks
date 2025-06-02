@@ -38,8 +38,7 @@ readonly class MigrationUtility
         protected ContentBlockBuilder $contentBlockBuilder,
         #[Autowire(service: 'webcoast.dce_to_contentblocks.ordered_migrators')]
         protected array $fieldConfigurationMigrators
-    ) {
-    }
+    ) {}
 
     private static function buildContentBlockName(string $title): string
     {
@@ -214,6 +213,7 @@ readonly class MigrationUtility
                             return $value;
                         })
                 ),
+                'type' => 'Tab',
                 'label' => $this->io->askQuestion(
                     (new Question('What is the label of the field?', $dceField['title']))
                         ->setValidator(function ($value) {
